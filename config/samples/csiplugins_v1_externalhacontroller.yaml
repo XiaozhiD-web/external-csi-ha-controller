@@ -1,0 +1,7 @@
+apiVersion: csiplugins.spdbdev.io/v1
+kind: ExternalHaController
+metadata:
+  name: externalhacontroller-sample
+spec:
+  deletePod: true
+  # Add fields here
