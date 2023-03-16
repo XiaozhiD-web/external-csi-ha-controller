@@ -1,0 +1,20 @@
+# permissions for end users to view externalhacontrollers.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: externalhacontroller-viewer-role
+rules:
+- apiGroups:
+  - csiplugins.spdbdev.io
+  resources:
+  - externalhacontrollers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - csiplugins.spdbdev.io
+  resources:
+  - externalhacontrollers/status
+  verbs:
+  - get
