@@ -19,8 +19,9 @@ package controllers
 import (
 	"context"
 	v1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/labels"
+	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -70,25 +71,77 @@ func (r *ExternalHaControllerReconciler) Reconcile(ctx context.Context, req ctrl
 		return reconcile.Result{}, err
 	}
 
-	podList := v1.PodList{}
-	labelsSelector := labels.SelectorFromSet(map[string]string{"deleteNow": "true"})
-	listOps := &client.ListOptions{
-		LabelSelector: labelsSelector,
-	}
-	err = r.Client.List(ctx, &podList, listOps)
+	pvcList := v1.PersistentVolumeClaimList{}
+	err = r.Client.List(ctx, &pvcList)
 	if err != nil {
-		reqLogger.Error(err, "Failed to list pod")
-		return reconcile.Result{}, err
+		reqLogger.Error(err, "Failed to list PersistentVolumeClaim", pvcList)
+
 	}
-	for _, pod := range podList.Items {
-		if externalHaController.Spec.DeletePod == true {
-			err = r.Client.Delete(ctx, &pod)
-			if err != nil {
-				reqLogger.Error(err, "Failed to delete pod")
+
+	var pvcs []string
+	var pvs []string
+	if len(pvcList.Items) != 0 {
+		for _, pvc := range pvcList.Items {
+			if pvc.Annotations["volume.kubernetes.io/storage-provisioner"] == "hostpath.csi.k8s.io" {
+				pvcs = append(pvcs, pvc.Name)
+				pvs = append(pvs, "pvc-"+string(pvc.UID))
 			}
+
 		}
 	}
 
+	vaList := storagev1.VolumeAttachmentList{}
+	err = r.Client.List(ctx, &vaList)
+	if err != nil {
+		reqLogger.Error(err, "Failed to list VolumeAttachment")
+	}
+
+	podList := v1.PodList{}
+	err = r.Client.List(ctx, &podList)
+	if err != nil {
+		reqLogger.Error(err, "Failed to list pod")
+	}
+
+	if externalHaController.Spec.DeletePod == true {
+		for _, pod := range podList.Items {
+			if _, exist := pod.Labels["deleteNow"]; exist {
+				err = r.Client.Delete(ctx, &pod, &client.DeleteOptions{
+					Preconditions: v12.NewUIDPreconditions(string(pod.UID)),
+				})
+				if err != nil {
+					reqLogger.Error(err, "Failed to delete pod")
+				}
+			}
+
+			for _, volume := range pod.Spec.Volumes {
+				if volume.PersistentVolumeClaim != nil {
+					for _, pvc := range pvcs {
+						if volume.PersistentVolumeClaim.ClaimName == pvc {
+							err = r.Client.Delete(ctx, &pod, &client.DeleteOptions{
+								Preconditions: v12.NewUIDPreconditions(string(pod.UID)),
+							})
+							if err != nil {
+								reqLogger.Error(err, "Failed to delete pod")
+							}
+						}
+					}
+				}
+			}
+		}
+		for _, pv := range pvs {
+			for _, va := range vaList.Items {
+				if *va.Spec.Source.PersistentVolumeName == pv || va.Spec.Attacher == "driver.longhorn.io" {
+					err = r.Client.Delete(ctx, &va, &client.DeleteOptions{
+						Preconditions: v12.NewUIDPreconditions(string(va.UID)),
+					})
+					if err != nil {
+						reqLogger.Error(err, "Failed to delete va")
+					}
+				}
+			}
+		}
+
+	}
 	return ctrl.Result{}, nil
 }
 

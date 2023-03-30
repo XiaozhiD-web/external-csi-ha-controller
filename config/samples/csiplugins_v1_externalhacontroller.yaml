@@ -3,5 +3,5 @@ kind: ExternalHaController
 metadata:
   name: externalhacontroller-sample
 spec:
-  deletePod: true
+  deletePod: false
   # Add fields here
